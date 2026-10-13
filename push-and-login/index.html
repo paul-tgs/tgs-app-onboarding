@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Onboarding</title>
+    <style>
+      .slides {
+        overflow: hidden;
+        touch-action: pan-y;
+        cursor: grab;
+      }
+
+      .slides.is-dragging {
+        cursor: grabbing;
+        user-select: none;
+      }
+
+      .slide-track {
+        display: flex;
+        transform: translateX(0);
+        transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+        will-change: transform;
+      }
+
+      .slide-track > section {
+        box-sizing: border-box;
+        flex: 0 0 var(--slide-width);
+        min-width: 0;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .slide-track {
+          transition: none;
+        }
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@batch.com/in-app-webview-sdk@1.0/build/batch-webview-sdk.min.js"></script>
+  </head>
+  <body>
+    <main>
+      <div class="slides">
+        <div class="slide-track" id="slide-track">
+          <section id="welcome" aria-labelledby="welcome-title">
+            <h1 id="welcome-title">Willkommen</h1>
+            <p>Das bietet Ihnen unsere App:</p>
+            <ul>
+              <li>Aktuelle Nachrichten und Eilmeldungen</li>
+              <li>Analysen, Interviews und exklusive Berichte</li>
+              <li>Nachrichten aus Ihrer Region und weitere Themen nach Ihren Interessen</li>
+              <li>Artikel merken und immer auf dem Laufenden bleiben</li>
+            </ul>
+            <button type="button" data-close>Schließen</button>
+            <button type="button" data-next>Weiter &gt;</button>
+          </section>
+
+          <section id="channels" aria-labelledby="channels-title" hidden>
+            <h1 id="channels-title">Ihre Themen</h1>
+            <p>Wählen Sie aus, zu welchen Themen Sie Push-Benachrichtigungen erhalten möchten.</p>
+            <ul id="channel-list"></ul>
+            <button type="button" data-close>Schließen</button>
+            <button type="button" data-next>Weiter &gt;</button>
+          </section>
+
+          <section id="account" aria-labelledby="account-title" hidden>
+            <h1 id="account-title">Jetzt loslegen</h1>
+            <p>Melden Sie sich an oder erstellen Sie ein Konto, um alle Vorteile zu nutzen.</p>
+            <button type="button" id="login">Login</button>
+            <button type="button" id="register">Registrierung</button>
+            <button type="button" id="finish">Starten &gt;</button>
+          </section>
+        </div>
+      </div>
+
+      <output id="status" aria-live="polite"></output>
+    </main>
+
+    <script>
+      // Payload sent to native code when the user closes or finishes onboarding.
+      const onboardingData = {
+        addPushTopics: [],
+        sso: null,
+      };
+
+      const topics = [
+        {
+          id: 'eilmeldungen',
+          title: 'Eilmeldungen',
+          description: 'Sie erhalten wichtigsten Nachrichten sofort auf Ihr Endgerät (0-2 pro Tag)',
+          default: false,
+        },
+        {
+          id: 'analysen-interviews-exklusives',
+          title: 'Empfehlungen der Redaktion',
+          description: 'Unsere Analysen, Interviews und exklusiven Berichte zu den Top-Themen des Tages erhalten Sie hier.',
+          default: false,
+        },
+        {
+          id: 'berlin',
+          title: 'Berlin',
+          description: 'Hier erhalten Sie die neuesten Artikel von unserer preisgekrönten Berlin-Redaktion.',
+          default: false,
+        },
+        {
+          id: 'neues-e-paper-verfügbar',
+          title: 'Neues E-Paper verfügbar',
+          description: 'Täglich informieren wir Sie um 19.30 Uhr, dass eine neue Ausgabe für Sie bereitsteht.',
+          default: false,
+        },
+        {
+          id: 'neue-raetsel-verfuegbar',
+          title: 'Neue Rätsel verfügbar',
+          description: 'Täglich informieren wir Sie, dass neue Spiele für Sie bereitstehen.',
+          default: false,
+        },
+      ];
+
+      const status = document.getElementById('status');
+      const flow = ['welcome', 'channels', 'account'];
+      const slideTrack = document.getElementById('slide-track');
+      const sections = [...slideTrack.querySelectorAll('section')];
+      let currentIndex = 0;
+
+      function updateFlow() {
+        slideTrack.style.width = `${flow.length * 100}%`;
+        slideTrack.style.setProperty('--slide-width', `${100 / flow.length}%`);
+        sections.forEach(section => {
+          section.hidden = !flow.includes(section.id);
+        });
+
+        void slideTrack.offsetWidth;
+        showScreen(currentIndex);
+      }
+
+      function performCustomAction(action, args) {
+        if (window.batchInAppSDK?.performAction) {
+          window.batchInAppSDK.performAction(action, args, action.replace(/\./g, '_'));
+          return;
+        }
+
+        const message = `Batch In-App WebView SDK nicht verfügbar. Aktion: ${action}; Daten: ${JSON.stringify(args)}`;
+        status.textContent = message;
+        console.error(message);
+      }
+
+      function showScreen(index) {
+        currentIndex = Math.max(0, Math.min(index, flow.length - 1));
+        const slideWidth = slideTrack.parentElement.clientWidth;
+        slideTrack.style.transform = `translateX(-${currentIndex * slideWidth}px)`;
+        sections.forEach(section => {
+          const inactive = section.id !== flow[currentIndex];
+          section.setAttribute('aria-hidden', String(inactive));
+          section.inert = inactive;
+        });
+      }
+
+      function nextScreen() {
+        showScreen(currentIndex + 1);
+      }
+
+      function previousScreen() {
+        showScreen(currentIndex - 1);
+      }
+
+      function renderTopics() {
+        const list = document.getElementById('channel-list');
+
+        topics.forEach(topic => {
+          const item = document.createElement('li');
+          const label = document.createElement('label');
+          const input = document.createElement('input');
+          const title = document.createElement('strong');
+          const description = document.createElement('span');
+
+          input.type = 'checkbox';
+          input.checked = onboardingData.addPushTopics.includes(topic.id);
+          input.addEventListener('change', () => {
+            if (input.checked) {
+              if (!onboardingData.addPushTopics.includes(topic.id)) {
+                onboardingData.addPushTopics.push(topic.id);
+              }
+            } else {
+              onboardingData.addPushTopics = onboardingData.addPushTopics.filter(
+                id => id !== topic.id,
+              );
+            }
+          });
+
+          title.textContent = topic.title;
+          description.textContent = ` — ${topic.description}`;
+          label.append(input, ' ', title, description);
+          item.append(label);
+          list.append(item);
+        });
+      }
+
+      document.querySelectorAll('[data-close]').forEach(button => {
+        button.addEventListener('click', () => {
+          performCustomAction('onboarding.close', onboardingData);
+        });
+      });
+
+      document.querySelectorAll('[data-next]').forEach(button => {
+        button.addEventListener('click', nextScreen);
+      });
+
+      document.getElementById('login').addEventListener('click', () => {
+        onboardingData.sso = 'login';
+        performCustomAction('onboarding.login', onboardingData);
+      });
+
+      document.getElementById('register').addEventListener('click', () => {
+        onboardingData.sso = 'register';
+        performCustomAction('onboarding.registration', onboardingData);
+      });
+
+      document.getElementById('finish').addEventListener('click', () => {
+        // Temporary: show the finish payload instead of sending it to native code.
+        if (window.batchInAppSDK?.performAction) {
+          window.batchInAppSDK.performAction = (_action, args) => {
+            window.alert(JSON.stringify(args, null, 2));
+          };
+        }
+        performCustomAction('onboarding.finish', onboardingData);
+      });
+
+      const slides = slideTrack.parentElement;
+      let pointerStart;
+      let suppressLabelClick = false;
+
+      slides.addEventListener('pointerdown', event => {
+        if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
+        if (event.target.closest('button, input, a, select, textarea')) return;
+
+        pointerStart = {
+          id: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          target: event.target,
+          lastX: event.clientX,
+          lastTime: event.timeStamp,
+          velocity: 0,
+          width: slides.clientWidth,
+          horizontal: false,
+        };
+        slides.setPointerCapture(event.pointerId);
+      });
+
+      slides.addEventListener('pointermove', event => {
+        if (!pointerStart || event.pointerId !== pointerStart.id) return;
+
+        const deltaX = event.clientX - pointerStart.x;
+        const deltaY = event.clientY - pointerStart.y;
+
+        if (!pointerStart.horizontal) {
+          if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 8) return;
+          if (Math.abs(deltaY) >= Math.abs(deltaX)) {
+            pointerStart = null;
+            return;
+          }
+
+          pointerStart.horizontal = true;
+          slides.classList.add('is-dragging');
+          slideTrack.style.transition = 'none';
+          slides.setPointerCapture(event.pointerId);
+        }
+
+        event.preventDefault();
+
+        const elapsed = Math.max(1, event.timeStamp - pointerStart.lastTime);
+        pointerStart.velocity = (event.clientX - pointerStart.lastX) / elapsed;
+        pointerStart.lastX = event.clientX;
+        pointerStart.lastTime = event.timeStamp;
+
+        const baseOffset = -currentIndex * pointerStart.width;
+        const proposedOffset = baseOffset + deltaX;
+        const minOffset = -(flow.length - 1) * pointerStart.width;
+        const resistedOffset = proposedOffset > 0
+          ? proposedOffset * 0.25
+          : proposedOffset < minOffset
+            ? minOffset + (proposedOffset - minOffset) * 0.25
+            : proposedOffset;
+        slideTrack.style.transform = `translateX(${resistedOffset}px)`;
+      }, {passive: false});
+
+      function finishPointerDrag(event, cancelled = false) {
+        if (!pointerStart || event.pointerId !== pointerStart.id) return;
+
+        const drag = pointerStart;
+        pointerStart = null;
+        slides.classList.remove('is-dragging');
+        slideTrack.style.transition = '';
+        void slideTrack.offsetWidth;
+
+        if (cancelled || !drag.horizontal) {
+          showScreen(currentIndex);
+          return;
+        }
+
+        suppressLabelClick = drag.target.closest('label') !== null;
+        if (suppressLabelClick) {
+          setTimeout(() => {
+            suppressLabelClick = false;
+          }, 0);
+        }
+
+        const distance = event.clientX - drag.x;
+        const threshold = drag.width * 0.22;
+        const releaseVelocity = event.timeStamp - drag.lastTime <= 100 ? drag.velocity : 0;
+        const quickSwipe = Math.abs(distance) > 24 && Math.abs(releaseVelocity) > 0.5;
+
+        if (distance < -threshold || (quickSwipe && releaseVelocity < -0.5)) {
+          nextScreen();
+        } else if (distance > threshold || (quickSwipe && releaseVelocity > 0.5)) {
+          previousScreen();
+        } else {
+          showScreen(currentIndex);
+        }
+      }
+
+      slides.addEventListener('pointerup', event => finishPointerDrag(event));
+      slides.addEventListener('pointercancel', event => finishPointerDrag(event, true));
+      slides.addEventListener('click', event => {
+        if (!suppressLabelClick) return;
+        event.preventDefault();
+        event.stopPropagation();
+        suppressLabelClick = false;
+      }, true);
+
+      window.addEventListener('resize', () => showScreen(currentIndex));
+
+      renderTopics();
+      updateFlow();
+    </script>
+  </body>
+</html>
